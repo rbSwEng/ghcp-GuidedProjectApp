@@ -2,6 +2,7 @@
 using Library.ApplicationCore.Entities;
 using Library.ApplicationCore.Enums;
 using Library.Console;
+using Library.Infrastructure.Data; // Add this for JsonData access
 
 public class ConsoleApp
 {
@@ -17,12 +18,21 @@ public class ConsoleApp
     ILoanService _loanService;
     IPatronService _patronService;
 
-    public ConsoleApp(ILoanService loanService, IPatronService patronService, IPatronRepository patronRepository, ILoanRepository loanRepository)
+    JsonData _jsonData; // Add this field
+
+    public ConsoleApp(
+        ILoanService loanService,
+        IPatronService patronService,
+        IPatronRepository patronRepository,
+        ILoanRepository loanRepository,
+        JsonData jsonData // Add JsonData to constructor
+    )
     {
         _patronRepository = patronRepository;
         _loanRepository = loanRepository;
         _loanService = loanService;
         _patronService = patronService;
+        _jsonData = jsonData; // Assign JsonData
     }
 
     public async Task Run()
@@ -100,14 +110,14 @@ public class ConsoleApp
         {
             if (selectedPatronNumber >= 1 && selectedPatronNumber <= matchingPatrons.Count)
             {
-                var selectedPatron = matchingPatrons.ElementAt(selectedPatronNumber - 1);
-                selectedPatronDetails = await _patronRepository.GetPatron(selectedPatron.Id)!;
-                return ConsoleState.PatronDetails;
+            var selectedPatron = matchingPatrons.ElementAt(selectedPatronNumber - 1);
+            selectedPatronDetails = await _patronRepository.GetPatron(selectedPatron.Id)!;
+            return ConsoleState.PatronDetails;
             }
             else
             {
-                Console.WriteLine("Invalid patron number. Please try again.");
-                return ConsoleState.PatronSearchResults;
+            Console.WriteLine("Invalid patron number. Please try again.");
+            return ConsoleState.PatronSearchResults;
             }
         }
         else if (action == CommonActions.Quit)
@@ -139,6 +149,7 @@ public class ConsoleApp
                 "m" when options.HasFlag(CommonActions.RenewPatronMembership) => CommonActions.RenewPatronMembership,
                 "e" when options.HasFlag(CommonActions.ExtendLoanedBook) => CommonActions.ExtendLoanedBook,
                 "r" when options.HasFlag(CommonActions.ReturnLoanedBook) => CommonActions.ReturnLoanedBook,
+                "b" when options.HasFlag(CommonActions.SearchBooks) => CommonActions.SearchBooks,
                 _ when int.TryParse(userInput, out optionNumber) => CommonActions.Select,
                 _ => CommonActions.Repeat
             };
@@ -170,6 +181,10 @@ public class ConsoleApp
         {
             Console.WriteLine(" - \"s\" for new search");
         }
+        if (options.HasFlag(CommonActions.SearchBooks))
+        {
+            Console.WriteLine(" - \"b\" to check for book availability");
+        }
         if (options.HasFlag(CommonActions.Quit))
         {
             Console.WriteLine(" - \"q\" to quit");
@@ -193,20 +208,20 @@ public class ConsoleApp
             loanNumber++;
         }
 
-        CommonActions options = CommonActions.SearchPatrons | CommonActions.Quit | CommonActions.Select | CommonActions.RenewPatronMembership;
+        CommonActions options = CommonActions.SearchPatrons | CommonActions.Quit | CommonActions.Select | CommonActions.RenewPatronMembership | CommonActions.SearchBooks;
         CommonActions action = ReadInputOptions(options, out int selectedLoanNumber);
         if (action == CommonActions.Select)
         {
             if (selectedLoanNumber >= 1 && selectedLoanNumber <= selectedPatronDetails.Loans.Count())
             {
-                var selectedLoan = selectedPatronDetails.Loans.ElementAt(selectedLoanNumber - 1);
-                selectedLoanDetails = selectedPatronDetails.Loans.Where(l => l.Id == selectedLoan.Id).Single();
-                return ConsoleState.LoanDetails;
+            var selectedLoan = selectedPatronDetails.Loans.ElementAt(selectedLoanNumber - 1);
+            selectedLoanDetails = selectedPatronDetails.Loans.Where(l => l.Id == selectedLoan.Id).Single();
+            return ConsoleState.LoanDetails;
             }
             else
             {
-                Console.WriteLine("Invalid book loan number. Please try again.");
-                return ConsoleState.PatronDetails;
+            Console.WriteLine("Invalid book loan number. Please try again.");
+            return ConsoleState.PatronDetails;
             }
         }
         else if (action == CommonActions.Quit)
@@ -225,50 +240,90 @@ public class ConsoleApp
             selectedPatronDetails = (await _patronRepository.GetPatron(selectedPatronDetails.Id))!;
             return ConsoleState.PatronDetails;
         }
+        else if (action == CommonActions.SearchBooks)
+        {
+            return await SearchBooks();
+        }
 
         throw new InvalidOperationException("An input option is not handled.");
     }
+
+    async Task<ConsoleState> SearchBooks()
+    {
+        string? bookTitle = null;
+        while (string.IsNullOrWhiteSpace(bookTitle))
+        {
+            Console.Write("Enter a book title to search for: ");
+            bookTitle = Console.ReadLine();
+        }
+
+        await _jsonData.EnsureDataLoaded();
+
+        // Find the book by title (case-insensitive)
+        var book = _jsonData.SearchBookByTitle(bookTitle);
+
+        if (book == null)
+        {
+            Console.WriteLine($"No book found with title \"{bookTitle}\".");
+            return ConsoleState.PatronDetails;
+        }
+
+        // Find all loans for these book items that are not returned
+        var onLoan = _jsonData.Loans?
+            .FirstOrDefault(l => l.BookItemId == book.Id && l.ReturnDate == null);
+
+        if (onLoan == null)
+        {
+            Console.WriteLine($"\"{book.Title}\" is available for loan.");
+        }
+        else
+        {
+            Console.WriteLine($"\"{book.Title}\" is on loan to another patron. The return due date is {onLoan.DueDate:yyyy-MM-dd}.");
+        }
+
+        return ConsoleState.PatronDetails;
+    }   
 
     async Task<ConsoleState> LoanDetails()
-    {
-        Console.WriteLine($"Book title: {selectedLoanDetails.BookItem!.Book!.Title}");
-        Console.WriteLine($"Book Author: {selectedLoanDetails.BookItem!.Book!.Author!.Name}");
-        Console.WriteLine($"Due date: {selectedLoanDetails.DueDate}");
-        Console.WriteLine($"Returned: {(selectedLoanDetails.ReturnDate != null).ToString()}");
-        Console.WriteLine();
-
-        CommonActions options = CommonActions.SearchPatrons | CommonActions.Quit | CommonActions.ReturnLoanedBook | CommonActions.ExtendLoanedBook;
-        CommonActions action = ReadInputOptions(options, out int selectedLoanNumber);
-
-        if (action == CommonActions.ExtendLoanedBook)
         {
-            var status = await _loanService.ExtendLoan(selectedLoanDetails.Id);
-            Console.WriteLine(EnumHelper.GetDescription(status));
+            Console.WriteLine($"Book title: {selectedLoanDetails.BookItem!.Book!.Title}");
+            Console.WriteLine($"Book Author: {selectedLoanDetails.BookItem!.Book!.Author!.Name}");
+            Console.WriteLine($"Due date: {selectedLoanDetails.DueDate}");
+            Console.WriteLine($"Returned: {(selectedLoanDetails.ReturnDate != null).ToString()}");
+            Console.WriteLine();
 
-            // reload loan after extending
-            selectedPatronDetails = (await _patronRepository.GetPatron(selectedPatronDetails.Id))!;
-            selectedLoanDetails = (await _loanRepository.GetLoan(selectedLoanDetails.Id))!;
-            return ConsoleState.LoanDetails;
-        }
-        else if (action == CommonActions.ReturnLoanedBook)
-        {
-            var status = await _loanService.ReturnLoan(selectedLoanDetails.Id);
+            CommonActions options = CommonActions.SearchPatrons | CommonActions.Quit | CommonActions.ReturnLoanedBook | CommonActions.ExtendLoanedBook;
+            CommonActions action = ReadInputOptions(options, out int selectedLoanNumber);
 
-            Console.WriteLine(EnumHelper.GetDescription(status));
-            _currentState = ConsoleState.LoanDetails;
-            // reload loan after returning
-            selectedLoanDetails = await _loanRepository.GetLoan(selectedLoanDetails.Id);
-            return ConsoleState.LoanDetails;
-        }
-        else if (action == CommonActions.Quit)
-        {
-            return ConsoleState.Quit;
-        }
-        else if (action == CommonActions.SearchPatrons)
-        {
-            return ConsoleState.PatronSearch;
-        }
+            if (action == CommonActions.ExtendLoanedBook)
+            {
+                var status = await _loanService.ExtendLoan(selectedLoanDetails.Id);
+                Console.WriteLine(EnumHelper.GetDescription(status));
 
-        throw new InvalidOperationException("An input option is not handled.");
-    }
+                // reload loan after extending
+                selectedPatronDetails = (await _patronRepository.GetPatron(selectedPatronDetails.Id))!;
+                selectedLoanDetails = (await _loanRepository.GetLoan(selectedLoanDetails.Id))!;
+                return ConsoleState.LoanDetails;
+            }
+            else if (action == CommonActions.ReturnLoanedBook)
+            {
+                var status = await _loanService.ReturnLoan(selectedLoanDetails.Id);
+
+                Console.WriteLine(EnumHelper.GetDescription(status));
+                _currentState = ConsoleState.LoanDetails;
+                // reload loan after returning
+                selectedLoanDetails = await _loanRepository.GetLoan(selectedLoanDetails.Id);
+                return ConsoleState.LoanDetails;
+            }
+            else if (action == CommonActions.Quit)
+            {
+                return ConsoleState.Quit;
+            }
+            else if (action == CommonActions.SearchPatrons)
+            {
+                return ConsoleState.PatronSearch;
+            }
+
+            throw new InvalidOperationException("An input option is not handled.");
+        }
 }

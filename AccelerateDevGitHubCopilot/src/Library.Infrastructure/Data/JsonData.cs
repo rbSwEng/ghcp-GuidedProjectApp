@@ -95,6 +95,14 @@ public class JsonData
         return populated;
     }
 
+    public Book? SearchBookByTitle(string title)
+    {
+        if (Books == null)
+            return null;
+
+        return Books.FirstOrDefault(b => string.Equals(b.Title, title, StringComparison.OrdinalIgnoreCase));
+    }
+
     public Patron GetPopulatedPatron(Patron p)
     {
         Patron populated = new Patron
