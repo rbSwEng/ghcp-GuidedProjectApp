@@ -1,0 +1,28 @@
+# Build results
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Log files
+*.log
+
+# Visual Studio
+.vs/
+
+# Test results
+TestResults/
+
+# macOS
+.DS_Store
+
+# VS Code settings (optional, uncomment if you want to ignore local settings)
+#.vscode/
+
+# Environment/config secrets
+*.env
+*.secrets.json
